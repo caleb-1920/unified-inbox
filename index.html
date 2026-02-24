@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unified Inbox - Client Hub</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 14px;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.5); }
+
+    @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slideInRight { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .animate-slideUp { animation: slideUp 0.3s ease-out; }
+    .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+    .animate-slideInRight { animation: slideInRight 0.3s ease-out; }
+
+    .toast-notification {
+      position: fixed; bottom: 24px; right: 24px;
+      background: linear-gradient(135deg, #1e293b, #334155);
+      color: #e2e8f0; padding: 14px 20px; border-radius: 12px;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      z-index: 9999; animation: slideUp 0.3s ease-out;
+      display: flex; align-items: center; gap: 12px; font-size: 13px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; backdrop-filter: blur(8px);
+    }
+    .modal-panel {
+      background: linear-gradient(180deg, #1e293b, #0f172a);
+      border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 16px;
+      padding: 28px; max-width: 520px; width: 92%;
+      animation: slideUp 0.3s ease-out; max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 25px 80px rgba(0, 0, 0, 0.6);
+    }
+
+    .input-field {
+      background: #0f172a; border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 10px; color: #e2e8f0; padding: 10px 14px; font-size: 13px;
+      transition: all 0.2s ease; width: 100%;
+    }
+    .input-field:focus {
+      outline: none; border-color: rgba(99, 102, 241, 0.5);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    }
+    .input-field::placeholder { color: #64748b; }
+
+    textarea {
+      color: #e2e8f0; background: #0f172a;
+      border: 1px solid rgba(148, 163, 184, 0.15); border-radius: 10px;
+      padding: 10px 14px; font-family: inherit; font-size: 13px; resize: vertical;
+    }
+    textarea:focus { outline: none; border-color: rgba(99, 102, 241, 0.5); }
+
+    select {
+      background-color: #0f172a; color: #e2e8f0;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      padding: 10px 14px; border-radius: 10px; font-size: 13px; width: 100%;
+    }
+    select option { background: #1e293b; color: #e2e8f0; }
+    input[type="checkbox"] { accent-color: #6366f1; cursor: pointer; }
+
+    @media (max-width: 768px) {
+      .nav-sidebar { position: fixed; bottom: 0; left: 0; right: 0; height: 64px; width: 100% !important; flex-direction: row; border-right: none; border-top: 1px solid rgba(148, 163, 184, 0.1); padding: 0; }
+      .nav-sidebar .nav-item { flex: 1; padding: 8px 0; }
+      .nav-sidebar .nav-item span { display: none; }
+      .nav-sidebar .compose-btn { display: none; }
+      .main-wrap { padding-bottom: 64px; }
+      .client-list-panel { width: 100% !important; }
+      .detail-panel { position: fixed; inset: 0; z-index: 100; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useCallback, useMemo, useRef, useEffect } = React;
+
+    /* ═══════════════════════════════════════════════
+       SUPABASE CONFIG — Fill these in to enable cloud sync
+       Leave as-is to run in Demo Mode (localStorage)
+    ═══════════════════════════════════════════════ */
+    const SUPABASE_URL  = 'https://YOUR_PROJECT_ID.supabase.co';
+    const SUPABASE_KEY  = 'YOUR_ANON_PUBLIC_KEY';
+    const USE_SUPABASE  = SUPABASE_URL.includes('.supabase.co') && !SUPABASE_URL.includes('YOUR_PROJECT');
+    const db = USE_SUPABASE ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+
+    /* ─── DB ↔ App mappers ─── */
+    function fromDBClient(c) {
+      return { ...c, businessType: c.business_type || '', lastContact: c.last_contact ? new Date(c.last_contact) : new Date(), notes: c.notes || [], tags: c.tags || [], platforms: c.platforms || [] };
+    }
+    function toDBClient(c, userId) {
+      return { user_id: userId, name: c.name, business_type: c.businessType || '', status: c.status || 'lead', platforms: c.platforms || [], budget: c.budget || 0, email: c.email || '', phone: c.phone || '', notes: c.notes || [], tags: c.tags || [], favorite: c.favorite || false, pinned: c.pinned || false, archived: c.archived || false, last_contact: c.lastContact || new Date() };
+    }
+    function fromDBMessage(m) {
+      return { ...m, clientId: m.client_id, timestamp: m.created_at ? new Date(m.created_at) : new Date() };
+    }
+    function toDBMessage(m, userId) {
+      return { user_id: userId, client_id: m.clientId, platform: m.platform, sender: m.sender, text: m.text, read: m.read, status: m.status };
+    }
+
+    /* ─── Platform Icons (branded SVGs) ─── */
+    const PlatformIcons = {
+      email: <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="3" fill="#EA4335"/><path d="M2 7.5L12 14L22 7.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+      slack: <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313z" fill="#E01E5A"/><path d="M8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312z" fill="#36C5F0"/><path d="M18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312z" fill="#2EB67D"/><path d="M15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z" fill="#ECB22E"/></svg>,
+      instagram: <svg className="w-5 h-5" viewBox="0 0 24 24"><defs><linearGradient id="ig" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stopColor="#FFDC80"/><stop offset="25%" stopColor="#F77737"/><stop offset="50%" stopColor="#E4405F"/><stop offset="75%" stopColor="#C13584"/><stop offset="100%" stopColor="#833AB4"/></linearGradient></defs><rect x="2" y="2" width="20" height="20" rx="6" fill="url(#ig)"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="white" strokeWidth="1.8"/><circle cx="17.5" cy="6.5" r="1.2" fill="white"/></svg>,
+      messenger: <svg className="w-5 h-5" viewBox="0 0 24 24"><defs><linearGradient id="msng" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stopColor="#0099FF"/><stop offset="100%" stopColor="#A033FF"/></linearGradient></defs><path d="M12 2C6.477 2 2 6.145 2 11.243c0 2.908 1.434 5.503 3.678 7.2V22l3.378-1.855c.9.25 1.855.384 2.944.384 5.523 0 10-4.145 10-9.243S17.523 2 12 2z" fill="url(#msng)"/><path d="M7.5 13.5L10.8 9.5L13.2 12L16.5 9.5L13.2 13.5L10.8 11L7.5 13.5Z" fill="white"/></svg>,
+      imessage: <svg className="w-5 h-5" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 5.935 2 10.7c0 2.834 1.534 5.355 3.938 7.001L5 22l3.79-2.15C9.82 20.1 10.89 20.25 12 20.25c5.523 0 10-3.785 10-8.55S17.523 2 12 2z" fill="#34C759"/><ellipse cx="8" cy="10.7" rx="1.2" ry="1.2" fill="white"/><ellipse cx="12" cy="10.7" rx="1.2" ry="1.2" fill="white"/><ellipse cx="16" cy="10.7" rx="1.2" ry="1.2" fill="white"/></svg>,
+      linkedin: <svg className="w-5 h-5" viewBox="0 0 24 24"><rect width="24" height="24" rx="4" fill="#0A66C2"/><path d="M7.5 9.5V17H5V9.5h2.5zM6.25 8.5a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zM19 17h-2.5v-3.5c0-1.5-1.75-1.4-1.75 0V17H12.5V9.5h2.25v1.3c.85-1.6 4.25-1.7 4.25 1.5V17z" fill="white"/></svg>,
+      zoom: <svg className="w-5 h-5" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#2D8CFF"/><rect x="4" y="7.5" width="11" height="9" rx="2" fill="white"/><path d="M16 10.5L20 8V16L16 13.5V10.5Z" fill="white"/></svg>,
+    };
+
+    const platformColors = {
+      email: '#EA4335', slack: '#E01E5A', instagram: '#E4405F',
+      messenger: '#0084FF', imessage: '#34C759', linkedin: '#0A66C2', zoom: '#2D8CFF',
+    };
+
+    /* ─── Initial Data ─── */
+    const INITIAL_CLIENTS = [
+      { id: '1', name: 'Acme Fitness', businessType: 'Fitness Studio', status: 'active', platforms: ['email', 'instagram', 'messenger', 'zoom'], budget: 2500, email: 'contact@acmefitness.com', phone: '(555) 123-4567', notes: [], tags: ['VIP'], favorite: true, pinned: true, lastContact: new Date(Date.now() - 3600000), archived: false },
+      { id: '2', name: "Sarah's Bakery", businessType: 'Local Bakery', status: 'active', platforms: ['email', 'instagram', 'messenger', 'imessage'], budget: 1200, email: 'sarah@bakerybiz.com', phone: '(555) 234-5678', notes: [], tags: ['New Lead'], favorite: false, pinned: false, lastContact: new Date(Date.now() - 7200000), archived: false },
+      { id: '3', name: 'TechStart Inc', businessType: 'SaaS Startup', status: 'lead', platforms: ['email', 'slack', 'linkedin', 'zoom'], budget: 5000, email: 'info@techstart.io', phone: '(555) 345-6789', notes: [], tags: ['Follow Up'], favorite: true, pinned: false, lastContact: new Date(Date.now() - 86400000), archived: false },
+      { id: '4', name: 'Green Gardens', businessType: 'Landscaping', status: 'waiting', platforms: ['email', 'messenger', 'imessage'], budget: 800, email: 'contact@greengardens.com', phone: '(555) 456-7890', notes: [], tags: [], favorite: false, pinned: false, lastContact: new Date(Date.now() - 259200000), archived: false },
+      { id: '5', name: 'Luna Boutique', businessType: 'Fashion Retail', status: 'active', platforms: ['email', 'instagram', 'messenger', 'linkedin'], budget: 3000, email: 'hello@lunaboutique.com', phone: '(555) 567-8901', notes: [], tags: ['VIP'], favorite: true, pinned: false, lastContact: new Date(Date.now() - 5400000), archived: false },
+      { id: '6', name: 'Dr. Smith Dental', businessType: 'Dental Practice', status: 'completed', platforms: ['email', 'messenger', 'zoom'], budget: 1500, email: 'office@smithdental.com', phone: '(555) 678-9012', notes: [], tags: [], favorite: false, pinned: false, lastContact: new Date(Date.now() - 604800000), archived: false },
+    ];
+
+    const INITIAL_MESSAGES = [
+      { id: '1', clientId: '1', platform: 'email', sender: 'client', text: "Hi! I'd like to discuss our ad campaign for next quarter.", timestamp: new Date(Date.now() - 3600000), read: true, status: 'read' },
+      { id: '2', clientId: '1', platform: 'instagram', sender: 'you', text: 'Great! Let me put together a proposal with some creative options.', timestamp: new Date(Date.now() - 3000000), read: true, status: 'delivered' },
+      { id: '3', clientId: '2', platform: 'messenger', sender: 'client', text: 'Can we schedule a call about the social media strategy?', timestamp: new Date(Date.now() - 7200000), read: true, status: 'read' },
+      { id: '4', clientId: '2', platform: 'email', sender: 'you', text: 'Absolutely! How about Tuesday at 2pm?', timestamp: new Date(Date.now() - 6900000), read: true, status: 'sent' },
+      { id: '5', clientId: '3', platform: 'linkedin', sender: 'client', text: "Interested in learning more about your lead gen services.", timestamp: new Date(Date.now() - 86400000), read: false, status: 'read' },
+      { id: '6', clientId: '4', platform: 'imessage', sender: 'client', text: 'Following up on the quote I requested last week.', timestamp: new Date(Date.now() - 259200000), read: true, status: 'read' },
+      { id: '7', clientId: '5', platform: 'instagram', sender: 'you', text: 'Check out your new Instagram ads — they went live this morning!', timestamp: new Date(Date.now() - 5400000), read: true, status: 'delivered' },
+      { id: '8', clientId: '6', platform: 'email', sender: 'client', text: 'Thanks for the amazing campaign results!', timestamp: new Date(Date.now() - 604800000), read: true, status: 'read' },
+      { id: '9', clientId: '1', platform: 'zoom', sender: 'you', text: 'Just sent you the Zoom link for our 3pm call.', timestamp: new Date(Date.now() - 1800000), read: true, status: 'delivered' },
+      { id: '10', clientId: '5', platform: 'linkedin', sender: 'client', text: 'Can you also help with our Google Ads?', timestamp: new Date(Date.now() - 3600000), read: false, status: 'read' },
+    ];
+
+    const INITIAL_TEMPLATES = [
+      { id: '1', title: 'Initial Outreach', category: 'Greeting', text: "Hi! I'd love to discuss how we can help grow your business through digital marketing. Are you available for a quick call this week?" },
+      { id: '2', title: 'Campaign Update', category: 'Status Update', text: "Great news! Your latest campaign is performing really well. I'll send you the full report by EOD." },
+      { id: '3', title: 'Meeting Follow-up', category: 'Follow-up', text: "Thanks for taking the time to chat today! Here's a recap of what we discussed and the agreed next steps..." },
+      { id: '4', title: 'Quote Request', category: 'Pricing', text: "Thanks for your interest! I've attached a custom quote based on your needs. Let me know if you have any questions." },
+      { id: '5', title: 'Monthly Report', category: 'Status Update', text: "Here's your monthly performance report. Key highlights: [EDIT]. Questions?" },
+    ];
+
+    const DEBOUNCE_DELAY = 300;
+
+    /* ─── Helpers ─── */
+    function timeAgo(date) {
+      if (!date) return '';
+      const d = new Date(date);
+      const diff = Date.now() - d.getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'Just now';
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      const days = Math.floor(hrs / 24);
+      if (days < 7) return `${days}d ago`;
+      return d.toLocaleDateString();
+    }
+
+    const statusColors = {
+      lead: { bg: 'rgba(251, 191, 36, 0.15)', text: '#fbbf24', label: 'Lead' },
+      active: { bg: 'rgba(34, 197, 94, 0.15)', text: '#22c55e', label: 'Active' },
+      waiting: { bg: 'rgba(249, 115, 22, 0.15)', text: '#f97316', label: 'Waiting' },
+      completed: { bg: 'rgba(99, 102, 241, 0.15)', text: '#818cf8', label: 'Completed' },
+    };
+
+    /* ═══════════════════════════════════════════════
+       AUTH / LOADING SCREENS
+    ═══════════════════════════════════════════════ */
+    function LoadingScreen() {
+      return (
+        <div className="flex items-center justify-center w-screen h-screen" style={{ background: '#0f172a' }}>
+          <div className="text-center animate-fadeIn">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+              <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
+            </div>
+            <div className="text-lg font-bold text-white mb-2">Client Hub</div>
+            <div className="text-sm" style={{ color: '#64748b', animation: 'pulse 1.5s infinite' }}>Loading...</div>
+          </div>
+        </div>
+      );
+    }
+
+    function LoginScreen() {
+      const [email, setEmail] = useState('');
+      const [password, setPassword] = useState('');
+      const [isSignUp, setIsSignUp] = useState(false);
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!email || !password) return;
+        setLoading(true); setError('');
+        try {
+          const { error: authError } = isSignUp
+            ? await db.auth.signUp({ email, password })
+            : await db.auth.signInWithPassword({ email, password });
+          if (authError) setError(authError.message);
+        } catch (err) { setError('Something went wrong'); }
+        setLoading(false);
+      };
+
+      return (
+        <div className="flex items-center justify-center w-screen h-screen" style={{ background: '#0f172a' }}>
+          <div className="w-full max-w-sm mx-4 animate-slideUp">
+            <div className="text-center mb-8">
+              <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
+              </div>
+              <h1 className="text-2xl font-bold text-white">Client Hub</h1>
+              <p className="text-sm mt-1" style={{ color: '#64748b' }}>Unified Inbox for your business</p>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 rounded-2xl space-y-4" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Email</label><input type="email" placeholder="you@email.com" value={email} onChange={e => setEmail(e.target.value)} className="input-field" required /></div>
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Password</label><input type="password" placeholder="Your password" value={password} onChange={e => setPassword(e.target.value)} className="input-field" required minLength="6" /></div>
+              {error && <div className="text-xs p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>{error}</div>}
+              <button type="submit" disabled={loading} className="w-full py-3 rounded-xl text-sm font-semibold text-white" style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', opacity: loading ? 0.7 : 1 }}>
+                {loading ? 'Please wait...' : isSignUp ? 'Create Account' : 'Sign In'}
+              </button>
+              <button type="button" onClick={() => { setIsSignUp(!isSignUp); setError(''); }} className="w-full text-center text-xs" style={{ color: '#818cf8' }}>
+                {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       MAIN APP
+    ═══════════════════════════════════════════════ */
+    function UnifiedInbox() {
+      /* ─── Auth state ─── */
+      const [user, setUser] = useState(null);
+      const [authReady, setAuthReady] = useState(!USE_SUPABASE);
+      const [dataLoading, setDataLoading] = useState(false);
+
+      useEffect(() => {
+        if (!db) return;
+        db.auth.getSession().then(({ data: { session } }) => { setUser(session?.user ?? null); setAuthReady(true); });
+        const { data: { subscription } } = db.auth.onAuthStateChange((_, session) => { setUser(session?.user ?? null); setAuthReady(true); });
+        return () => subscription.unsubscribe();
+      }, []);
+
+      const [activeNav, setActiveNav] = useState('inbox');
+      const [selectedClientId, setSelectedClientId] = useState(null);
+      const [clients, setClients] = useState(() => {
+        if (USE_SUPABASE) return [];
+        const saved = localStorage.getItem('ui_clients');
+        return saved ? JSON.parse(saved) : INITIAL_CLIENTS;
+      });
+      const [messages, setMessages] = useState(() => {
+        if (USE_SUPABASE) return [];
+        const saved = localStorage.getItem('ui_messages');
+        return saved ? JSON.parse(saved).map(m => ({ ...m, timestamp: new Date(m.timestamp) })) : INITIAL_MESSAGES;
+      });
+      const [templates, setTemplates] = useState(() => {
+        if (USE_SUPABASE) return [];
+        const saved = localStorage.getItem('ui_templates');
+        return saved ? JSON.parse(saved) : INITIAL_TEMPLATES;
+      });
+
+      /* ─── Load data from Supabase when authenticated ─── */
+      useEffect(() => {
+        if (!db || !user) return;
+        setDataLoading(true);
+        Promise.all([
+          db.from('clients').select('*').order('last_contact', { ascending: false }),
+          db.from('messages').select('*').order('created_at', { ascending: true }),
+          db.from('templates').select('*').order('created_at', { ascending: true }),
+        ]).then(([cRes, mRes, tRes]) => {
+          if (cRes.data) setClients(cRes.data.map(fromDBClient));
+          if (mRes.data) setMessages(mRes.data.map(fromDBMessage));
+          if (tRes.data) setTemplates(tRes.data);
+          setDataLoading(false);
+        }).catch(() => setDataLoading(false));
+      }, [user]);
+      const [searchQuery, setSearchQuery] = useState('');
+      const [platformFilter, setPlatformFilter] = useState(null);
+      const [statusFilter, setStatusFilter] = useState(null);
+      const [showAddClientModal, setShowAddClientModal] = useState(false);
+      const [showNewMessageModal, setShowNewMessageModal] = useState(false);
+      const [showTemplateModal, setShowTemplateModal] = useState(false);
+      const [editingTemplate, setEditingTemplate] = useState(null);
+      const [toast, setToast] = useState(null);
+      const [clientNoteText, setClientNoteText] = useState('');
+      const [dnd, setDnd] = useState(() => {
+        const saved = localStorage.getItem('ui_dnd');
+        return saved !== null ? JSON.parse(saved) : false;
+      });
+      const [deleteToast, setDeleteToast] = useState(null);
+      const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+      const debounceRef = useRef(null);
+      const [mobileShowDetail, setMobileShowDetail] = useState(false);
+
+      const notificationCount = useMemo(() => messages.filter(m => m.sender === 'client' && !m.read).length, [messages]);
+
+      const saveToLocalStorage = useCallback((key, data) => { localStorage.setItem(key, JSON.stringify(data)); }, []);
+      const debouncedSave = useCallback((key, data) => {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => saveToLocalStorage(key, data), DEBOUNCE_DELAY);
+      }, [saveToLocalStorage]);
+
+      useEffect(() => { if (!USE_SUPABASE) debouncedSave('ui_clients', clients); }, [clients, debouncedSave]);
+      useEffect(() => { if (!USE_SUPABASE) debouncedSave('ui_messages', messages); }, [messages, debouncedSave]);
+      useEffect(() => { if (!USE_SUPABASE) debouncedSave('ui_templates', templates); }, [templates, debouncedSave]);
+      useEffect(() => { saveToLocalStorage('ui_dnd', dnd); }, [dnd, saveToLocalStorage]);
+
+      const showToast = (message) => { if (dnd) return; setToast(message); setTimeout(() => setToast(null), 3000); };
+
+      /* ─── Supabase helper: update a client field ─── */
+      const sbUpdateClient = async (clientId, fields) => {
+        if (!db || !user) return;
+        const dbFields = {};
+        if ('archived' in fields) dbFields.archived = fields.archived;
+        if ('favorite' in fields) dbFields.favorite = fields.favorite;
+        if ('pinned' in fields) dbFields.pinned = fields.pinned;
+        if ('status' in fields) dbFields.status = fields.status;
+        if ('tags' in fields) dbFields.tags = fields.tags;
+        if ('notes' in fields) dbFields.notes = fields.notes;
+        if ('lastContact' in fields) dbFields.last_contact = fields.lastContact;
+        await db.from('clients').update(dbFields).eq('id', clientId);
+      };
+
+      /* ─── Client CRUD ─── */
+      const handleAddClient = async (formData) => {
+        const base = { ...formData, notes: [], tags: [], favorite: false, pinned: false, lastContact: new Date(), archived: false };
+        if (db && user) {
+          const { data } = await db.from('clients').insert([toDBClient(base, user.id)]).select();
+          if (data && data[0]) setClients(prev => [...prev, fromDBClient(data[0])]);
+        } else {
+          setClients(prev => [...prev, { id: String(Date.now()), ...base }]);
+        }
+        showToast('Client added successfully');
+        setShowAddClientModal(false);
+      };
+      const handleDeleteClient = (clientId) => setShowDeleteConfirm(clientId);
+      const confirmDeleteClient = async () => {
+        const cl = clients.find(c => c.id === showDeleteConfirm);
+        const prevClients = clients;
+        const prevMessages = messages;
+        setClients(clients.filter(c => c.id !== showDeleteConfirm));
+        setMessages(messages.filter(m => m.clientId !== showDeleteConfirm));
+        setSelectedClientId(null);
+        if (db && user) {
+          await db.from('messages').delete().eq('client_id', showDeleteConfirm);
+          await db.from('clients').delete().eq('id', showDeleteConfirm);
+        }
+        setDeleteToast({ clientName: cl?.name, prevClients, prevMessages, deletedId: showDeleteConfirm });
+        setShowDeleteConfirm(null);
+        showToast(`${cl?.name} deleted`);
+      };
+      const undoDelete = async () => {
+        if (deleteToast) {
+          setClients(deleteToast.prevClients);
+          setMessages(deleteToast.prevMessages);
+          if (db && user) {
+            const cl = deleteToast.prevClients.find(c => c.id === deleteToast.deletedId);
+            if (cl) await db.from('clients').upsert([toDBClient(cl, user.id)]);
+            const msgs = deleteToast.prevMessages.filter(m => m.clientId === deleteToast.deletedId);
+            if (msgs.length) await db.from('messages').upsert(msgs.map(m => toDBMessage(m, user.id)));
+          }
+          setDeleteToast(null);
+          showToast('Deletion undone');
+        }
+      };
+      const handleArchiveClient = (clientId) => { setClients(clients.map(c => c.id === clientId ? { ...c, archived: true } : c)); sbUpdateClient(clientId, { archived: true }); showToast('Client archived'); };
+      const handleReactivateClient = (clientId) => { setClients(clients.map(c => c.id === clientId ? { ...c, archived: false } : c)); sbUpdateClient(clientId, { archived: false }); showToast('Client reactivated'); };
+      const handleToggleFavorite = (clientId) => { const cl = clients.find(c => c.id === clientId); setClients(clients.map(c => c.id === clientId ? { ...c, favorite: !c.favorite } : c)); sbUpdateClient(clientId, { favorite: !cl?.favorite }); };
+      const handlePinClient = (clientId) => { const cl = clients.find(c => c.id === clientId); setClients(clients.map(c => c.id === clientId ? { ...c, pinned: !c.pinned } : c)); sbUpdateClient(clientId, { pinned: !cl?.pinned }); };
+      const handleAddTag = (clientId, tag) => { if (!tag) return; const cl = clients.find(c => c.id === clientId); if (cl && !cl.tags.includes(tag)) { const newTags = [...cl.tags, tag]; setClients(clients.map(c => c.id === clientId ? { ...c, tags: newTags } : c)); sbUpdateClient(clientId, { tags: newTags }); } };
+      const handleRemoveTag = (clientId, tag) => { const cl = clients.find(c => c.id === clientId); if (cl) { const newTags = cl.tags.filter(t => t !== tag); setClients(clients.map(c => c.id === clientId ? { ...c, tags: newTags } : c)); sbUpdateClient(clientId, { tags: newTags }); } };
+      const handleUpdateStatus = (clientId, status) => { setClients(clients.map(c => c.id === clientId ? { ...c, status } : c)); sbUpdateClient(clientId, { status }); showToast(`Status updated to ${status}`); };
+
+      /* ─── Messages ─── */
+      const handleSendMessage = async (text, platform) => {
+        const base = { clientId: selectedClientId, platform, sender: 'you', text, timestamp: new Date(), read: true, status: 'sent' };
+        if (db && user) {
+          const { data } = await db.from('messages').insert([toDBMessage(base, user.id)]).select();
+          if (data && data[0]) setMessages(prev => [...prev, fromDBMessage(data[0])]);
+          await db.from('clients').update({ last_contact: new Date() }).eq('id', selectedClientId);
+        } else {
+          setMessages(prev => [...prev, { id: String(Date.now()), ...base }]);
+        }
+        setClients(clients.map(c => c.id === selectedClientId ? { ...c, lastContact: new Date() } : c));
+        showToast('Message sent');
+        setShowNewMessageModal(false);
+      };
+      const handleMarkRead = async (clientId) => {
+        setMessages(messages.map(m => m.clientId === clientId && m.sender === 'client' ? { ...m, read: true } : m));
+        if (db && user) await db.from('messages').update({ read: true }).eq('client_id', clientId).eq('sender', 'client');
+      };
+
+      /* ─── Notes ─── */
+      const handleAddNote = () => {
+        if (!clientNoteText.trim()) return;
+        const cl = clients.find(c => c.id === selectedClientId);
+        const newNotes = [...(cl?.notes || []), { id: Date.now(), text: clientNoteText, timestamp: new Date() }];
+        setClients(clients.map(c => c.id === selectedClientId ? { ...c, notes: newNotes } : c));
+        sbUpdateClient(selectedClientId, { notes: newNotes });
+        setClientNoteText('');
+        showToast('Note added');
+      };
+
+      /* ─── Templates ─── */
+      const handleSaveTemplate = async (templateData) => {
+        if (editingTemplate) {
+          setTemplates(templates.map(t => t.id === editingTemplate.id ? { ...templateData, id: t.id } : t));
+          if (db && user) await db.from('templates').update(templateData).eq('id', editingTemplate.id);
+          showToast('Template updated');
+        } else {
+          if (db && user) {
+            const { data } = await db.from('templates').insert([{ ...templateData, user_id: user.id }]).select();
+            if (data && data[0]) setTemplates(prev => [...prev, data[0]]);
+          } else {
+            setTemplates(prev => [...prev, { ...templateData, id: String(Date.now()) }]);
+          }
+          showToast('Template created');
+        }
+        setEditingTemplate(null); setShowTemplateModal(false);
+      };
+      const handleDeleteTemplate = async (id) => {
+        setTemplates(templates.filter(t => t.id !== id));
+        if (db && user) await db.from('templates').delete().eq('id', id);
+        showToast('Template deleted');
+      };
+
+      /* ─── Export / Import ─── */
+      const handleExportJSON = () => {
+        const blob = new Blob([JSON.stringify({ clients, messages, templates }, null, 2)], { type: 'application/json' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+        a.download = `unified-inbox-${new Date().toISOString().split('T')[0]}.json`; a.click();
+        showToast('Exported as JSON');
+      };
+      const handleExportCSV = () => {
+        const rows = [['Name','Type','Status','Budget','Email','Phone'], ...clients.map(c => [c.name,c.businessType,c.status,c.budget,c.email,c.phone])];
+        const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        a.download = `clients-${new Date().toISOString().split('T')[0]}.csv`; a.click();
+        showToast('Exported as CSV');
+      };
+      const handleImport = (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const data = JSON.parse(ev.target.result);
+            if (data.clients) setClients(data.clients);
+            if (data.messages) setMessages(data.messages.map(m => ({ ...m, timestamp: new Date(m.timestamp) })));
+            if (data.templates) setTemplates(data.templates);
+            showToast('Data imported successfully');
+          } catch { showToast('Import failed — invalid file'); }
+        };
+        reader.readAsText(file);
+      };
+
+      /* ─── Filtering ─── */
+      const filteredClients = useMemo(() => {
+        let result = activeNav === 'archived' ? clients.filter(c => c.archived) : clients.filter(c => !c.archived);
+        if (searchQuery) { const q = searchQuery.toLowerCase(); result = result.filter(c => c.name.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q) || c.businessType?.toLowerCase().includes(q)); }
+        if (platformFilter) result = result.filter(c => c.platforms.includes(platformFilter));
+        if (statusFilter) result = result.filter(c => c.status === statusFilter);
+        const pinned = result.filter(c => c.pinned).sort((a, b) => new Date(b.lastContact) - new Date(a.lastContact));
+        const unpinned = result.filter(c => !c.pinned).sort((a, b) => new Date(b.lastContact) - new Date(a.lastContact));
+        return [...pinned, ...unpinned];
+      }, [clients, activeNav, searchQuery, platformFilter, statusFilter]);
+
+      const selectedClient = useMemo(() => clients.find(c => c.id === selectedClientId), [clients, selectedClientId]);
+      const clientMessages = useMemo(() => selectedClientId ? messages.filter(m => m.clientId === selectedClientId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) : [], [messages, selectedClientId]);
+      const lastMessageForClient = useCallback((clientId) => {
+        const msgs = messages.filter(m => m.clientId === clientId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        return msgs[0] || null;
+      }, [messages]);
+      const unreadForClient = useCallback((clientId) => messages.filter(m => m.clientId === clientId && m.sender === 'client' && !m.read).length, [messages]);
+
+      const stats = useMemo(() => {
+        const s = { lead: 0, active: 0, waiting: 0, completed: 0 };
+        clients.filter(c => !c.archived).forEach(c => s[c.status]++);
+        return { ...s, totalBudget: clients.filter(c => !c.archived).reduce((a, c) => a + (c.budget || 0), 0), unread: notificationCount, totalClients: clients.filter(c => !c.archived).length };
+      }, [clients, notificationCount]);
+
+      const selectClient = (id) => {
+        setSelectedClientId(id);
+        setMobileShowDetail(true);
+        handleMarkRead(id);
+      };
+
+      /* ─── Auth gates ─── */
+      if (USE_SUPABASE && !authReady) return <LoadingScreen />;
+      if (USE_SUPABASE && authReady && !user) return <LoginScreen />;
+      if (dataLoading) return <LoadingScreen />;
+
+      const handleSignOut = async () => { if (db) await db.auth.signOut(); };
+
+      return (
+        <div className="flex flex-col w-screen h-screen overflow-hidden" style={{ background: '#0f172a' }}>
+          {/* Demo mode banner */}
+          {!USE_SUPABASE && (
+            <div className="flex-shrink-0 text-center py-1.5 text-xs font-medium" style={{ background: 'linear-gradient(90deg, #f59e0b, #d97706)', color: '#0f172a' }}>
+              Demo Mode — Add your Supabase credentials to enable cloud sync &amp; login
+            </div>
+          )}
+          <div className="flex flex-1 overflow-hidden">
+
+          {/* ─── NAV SIDEBAR ─── */}
+          <nav className="nav-sidebar flex flex-col w-56 h-screen flex-shrink-0" style={{ background: '#0b1120', borderRight: '1px solid rgba(148,163,184,0.08)' }}>
+            <div className="px-5 py-5 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
+              </div>
+              <div>
+                <div className="text-sm font-bold text-white">Client Hub</div>
+                <div className="text-xs" style={{ color: '#64748b' }}>Unified Inbox</div>
+              </div>
+            </div>
+
+            <div className="mt-2 px-3 space-y-1 flex-1">
+              {[
+                { id: 'inbox', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>, label: 'Inbox', badge: notificationCount },
+                { id: 'analytics', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>, label: 'Analytics' },
+                { id: 'templates', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>, label: 'Templates' },
+                { id: 'archived', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>, label: 'Archive' },
+                { id: 'settings', icon: <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>, label: 'Settings' },
+              ].map(item => (
+                <button key={item.id} onClick={() => { setActiveNav(item.id); setSelectedClientId(null); setMobileShowDetail(false); }}
+                  className="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200"
+                  style={{ background: activeNav === item.id ? 'rgba(99, 102, 241, 0.15)' : 'transparent', color: activeNav === item.id ? '#a5b4fc' : '#94a3b8' }}>
+                  {item.icon}
+                  <span>{item.label}</span>
+                  {item.badge > 0 && <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#ef4444', color: 'white' }}>{item.badge}</span>}
+                </button>
+              ))}
+            </div>
+
+            <div className="px-3 pb-4">
+              <button onClick={() => setShowAddClientModal(true)} className="compose-btn w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg"
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', boxShadow: '0 4px 15px rgba(99, 102, 241, 0.3)' }}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                New Client
+              </button>
+            </div>
+          </nav>
+
+          {/* ─── MAIN CONTENT ─── */}
+          <div className="main-wrap flex flex-1 overflow-hidden">
+            {(activeNav === 'inbox' || activeNav === 'archived') && (
+              <>
+                {/* Client List */}
+                <div className="client-list-panel flex flex-col" style={{ width: 360, background: '#111827', borderRight: '1px solid rgba(148,163,184,0.08)' }}>
+                  <div className="p-4 space-y-3 flex-shrink-0" style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+                    <div className="relative">
+                      <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: '#64748b' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                      <input type="text" placeholder="Search clients..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="input-field pl-10" />
+                    </div>
+                    {/* Platform Filter Chips */}
+                    <div className="flex gap-1.5 flex-wrap">
+                      <button onClick={() => setPlatformFilter(null)} className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all" style={{ background: !platformFilter ? 'rgba(99,102,241,0.2)' : 'rgba(148,163,184,0.08)', color: !platformFilter ? '#a5b4fc' : '#94a3b8' }}>All</button>
+                      {Object.keys(PlatformIcons).map(p => (
+                        <button key={p} onClick={() => setPlatformFilter(platformFilter === p ? null : p)} className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all" title={p}
+                          style={{ background: platformFilter === p ? 'rgba(99,102,241,0.2)' : 'rgba(148,163,184,0.08)', opacity: platformFilter === p ? 1 : 0.7 }}>
+                          <span className="w-4 h-4 flex items-center justify-center">{PlatformIcons[p]}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {/* Status Filter */}
+                    {activeNav === 'inbox' && (
+                      <div className="flex gap-1.5 flex-wrap">
+                        <button onClick={() => setStatusFilter(null)} className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all" style={{ background: !statusFilter ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.06)', color: !statusFilter ? '#a5b4fc' : '#64748b' }}>All Status</button>
+                        {Object.entries(statusColors).map(([key, val]) => (
+                          <button key={key} onClick={() => setStatusFilter(statusFilter === key ? null : key)} className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all"
+                            style={{ background: statusFilter === key ? val.bg : 'rgba(148,163,184,0.06)', color: statusFilter === key ? val.text : '#64748b' }}>
+                            {val.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto">
+                    {filteredClients.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+                        <svg className="w-12 h-12 mb-4" style={{ color: '#334155' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                        <div className="text-sm font-medium" style={{ color: '#94a3b8' }}>No clients found</div>
+                        <div className="text-xs mt-1" style={{ color: '#475569' }}>Try adjusting your filters</div>
+                      </div>
+                    ) : (
+                      filteredClients.map(client => {
+                        const lastMsg = lastMessageForClient(client.id);
+                        const unread = unreadForClient(client.id);
+                        return (
+                          <button key={client.id} onClick={() => selectClient(client.id)}
+                            className="w-full text-left px-4 py-3.5 transition-all duration-200 border-b"
+                            style={{
+                              background: selectedClientId === client.id ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
+                              borderColor: 'rgba(148,163,184,0.06)',
+                              borderLeft: selectedClientId === client.id ? '3px solid #6366f1' : '3px solid transparent',
+                            }}>
+                            <div className="flex items-start gap-3">
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold flex-shrink-0"
+                                style={{ background: `linear-gradient(135deg, ${platformColors[client.platforms[0]] || '#6366f1'}33, ${platformColors[client.platforms[0]] || '#6366f1'}11)`, color: platformColors[client.platforms[0]] || '#6366f1' }}>
+                                {client.name.charAt(0)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-sm font-semibold text-white truncate">{client.name}</span>
+                                    {client.favorite && <svg className="w-3.5 h-3.5 flex-shrink-0" fill="#fbbf24" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>}
+                                    {client.pinned && <span className="text-xs">📌</span>}
+                                  </div>
+                                  <span className="text-xs flex-shrink-0" style={{ color: '#64748b' }}>{timeAgo(client.lastContact)}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-xs px-2 py-0.5 rounded-md font-medium" style={{ background: statusColors[client.status]?.bg, color: statusColors[client.status]?.text }}>{statusColors[client.status]?.label}</span>
+                                  <span className="text-xs" style={{ color: '#475569' }}>{client.businessType}</span>
+                                </div>
+                                {lastMsg && <p className="text-xs mt-1.5 truncate" style={{ color: '#94a3b8' }}>{lastMsg.sender === 'you' ? 'You: ' : ''}{lastMsg.text}</p>}
+                                <div className="flex items-center gap-1.5 mt-2">
+                                  {client.platforms.map(p => <span key={p} className="w-4 h-4 flex items-center justify-center opacity-70">{PlatformIcons[p]}</span>)}
+                                  {unread > 0 && <span className="ml-auto text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ background: '#6366f1', color: 'white', fontSize: 10 }}>{unread}</span>}
+                                </div>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Detail Panel */}
+                {selectedClient ? (
+                  <ClientDetail client={selectedClient} messages={clientMessages} onSendMessage={handleSendMessage} onAddNote={handleAddNote} clientNoteText={clientNoteText} setClientNoteText={setClientNoteText}
+                    onArchive={handleArchiveClient} onReactivate={handleReactivateClient} onDelete={handleDeleteClient} onToggleFavorite={handleToggleFavorite} onPinClient={handlePinClient}
+                    onAddTag={handleAddTag} onRemoveTag={handleRemoveTag} onShowMessage={() => setShowNewMessageModal(true)} onUpdateStatus={handleUpdateStatus}
+                    templates={templates} archived={activeNav === 'archived'} onBack={() => { setSelectedClientId(null); setMobileShowDetail(false); }} />
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center" style={{ background: '#0f172a' }}>
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5" style={{ background: 'rgba(99,102,241,0.1)' }}>
+                      <svg className="w-8 h-8" style={{ color: '#6366f1' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                    </div>
+                    <div className="text-lg font-semibold text-white mb-2">Select a conversation</div>
+                    <div className="text-sm" style={{ color: '#64748b' }}>Choose a client to view messages and details</div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {activeNav === 'analytics' && <AnalyticsPanel messages={messages} clients={clients} stats={stats} />}
+            {activeNav === 'templates' && <TemplatesPanel templates={templates} onAdd={() => { setEditingTemplate(null); setShowTemplateModal(true); }} onEdit={(t) => { setEditingTemplate(t); setShowTemplateModal(true); }} onDelete={handleDeleteTemplate} />}
+            {activeNav === 'settings' && <SettingsPanel dnd={dnd} setDnd={setDnd} onExportJSON={handleExportJSON} onExportCSV={handleExportCSV} onImport={handleImport} user={user} onSignOut={handleSignOut} useSupabase={USE_SUPABASE} />}
+          </div>
+
+          {/* ─── MODALS ─── */}
+          {showAddClientModal && <AddClientModal onClose={() => setShowAddClientModal(false)} onAdd={handleAddClient} />}
+          {showNewMessageModal && selectedClient && <NewMessageModal onClose={() => setShowNewMessageModal(false)} onSend={handleSendMessage} platforms={selectedClient.platforms} templates={templates} />}
+          {showTemplateModal && <TemplateModal onClose={() => { setEditingTemplate(null); setShowTemplateModal(false); }} onSave={handleSaveTemplate} initialData={editingTemplate} />}
+          {showDeleteConfirm && <DeleteConfirmModal clientName={clients.find(c => c.id === showDeleteConfirm)?.name} onConfirm={confirmDeleteClient} onCancel={() => setShowDeleteConfirm(null)} />}
+          {deleteToast && <div className="toast-notification"><span>{deleteToast.clientName} deleted</span><button onClick={undoDelete} style={{ color: '#818cf8', fontWeight: 600 }}>Undo</button><button onClick={() => setDeleteToast(null)} style={{ color: '#64748b', marginLeft: 8 }}>x</button></div>}
+          {toast && <div className="toast-notification animate-slideUp"><svg className="w-4 h-4" style={{ color: '#22c55e' }} fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg><span>{toast}</span></div>}
+          </div>{/* close flex-1 wrapper */}
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       CLIENT DETAIL
+    ═══════════════════════════════════════════════ */
+    function ClientDetail({ client, messages, onSendMessage, onAddNote, clientNoteText, setClientNoteText, onArchive, onReactivate, onDelete, onToggleFavorite, onPinClient, onAddTag, onRemoveTag, onShowMessage, onUpdateStatus, templates, archived, onBack }) {
+      const [tab, setTab] = useState('messages');
+      const [newTag, setNewTag] = useState('');
+      const messagesEndRef = useRef(null);
+
+      useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+      if (!client) return null;
+
+      const statusFlow = ['lead', 'active', 'waiting', 'completed'];
+
+      return (
+        <div className="detail-panel flex-1 flex flex-col animate-slideInRight" style={{ background: '#0f172a' }}>
+          {/* Header */}
+          <div className="flex items-center gap-4 px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid rgba(148,163,184,0.08)', background: '#111827' }}>
+            <button onClick={onBack} className="md:hidden p-1 rounded-lg" style={{ color: '#94a3b8' }}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <div className="w-11 h-11 rounded-xl flex items-center justify-center text-lg font-bold"
+              style={{ background: `linear-gradient(135deg, ${platformColors[client.platforms[0]] || '#6366f1'}44, ${platformColors[client.platforms[0]] || '#6366f1'}11)`, color: platformColors[client.platforms[0]] || '#6366f1' }}>
+              {client.name.charAt(0)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white truncate">{client.name}</h2>
+                <span className="text-xs px-2 py-0.5 rounded-md font-medium" style={{ background: statusColors[client.status]?.bg, color: statusColors[client.status]?.text }}>{statusColors[client.status]?.label}</span>
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: '#64748b' }}>{client.businessType} &middot; ${client.budget?.toLocaleString()}/mo</div>
+            </div>
+            <div className="flex items-center gap-1">
+              {!archived && (
+                <>
+                  <button onClick={() => onToggleFavorite(client.id)} className="p-2 rounded-lg transition-colors" style={{ color: client.favorite ? '#fbbf24' : '#475569' }}>
+                    {client.favorite ? <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg> : <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>}
+                  </button>
+                  <button onClick={() => onPinClient(client.id)} className="p-2 rounded-lg transition-colors text-sm" style={{ color: client.pinned ? '#818cf8' : '#475569' }}>📌</button>
+                  <button onClick={() => onArchive(client.id)} className="p-2 rounded-lg transition-colors" style={{ color: '#475569' }} title="Archive">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" /></svg>
+                  </button>
+                </>
+              )}
+              {archived && <button onClick={() => onReactivate(client.id)} className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>Reactivate</button>}
+              <button onClick={() => onDelete(client.id)} className="p-2 rounded-lg transition-colors" style={{ color: '#ef4444' }}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex gap-0 flex-shrink-0" style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+            {['messages', 'details', 'notes'].map(t => (
+              <button key={t} onClick={() => setTab(t)} className="px-5 py-3 text-sm font-medium capitalize transition-colors"
+                style={{ color: tab === t ? '#a5b4fc' : '#64748b', borderBottom: tab === t ? '2px solid #6366f1' : '2px solid transparent' }}>
+                {t}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab Content */}
+          {tab === 'messages' && (
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+                {messages.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full">
+                    <div className="text-sm" style={{ color: '#475569' }}>No messages yet. Start the conversation!</div>
+                  </div>
+                ) : messages.map(msg => (
+                  <div key={msg.id} className={`flex ${msg.sender === 'you' ? 'justify-end' : 'justify-start'} animate-slideUp`}>
+                    <div className="max-w-sm rounded-2xl px-4 py-3 text-sm" style={{
+                      background: msg.sender === 'you' ? 'linear-gradient(135deg, #4f46e5, #6366f1)' : '#1e293b',
+                      color: msg.sender === 'you' ? 'white' : '#e2e8f0',
+                      borderBottomRightRadius: msg.sender === 'you' ? 4 : 16,
+                      borderBottomLeftRadius: msg.sender === 'you' ? 16 : 4,
+                    }}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className="w-4 h-4">{PlatformIcons[msg.platform]}</span>
+                        <span className="text-xs" style={{ opacity: 0.7 }}>{timeAgo(msg.timestamp)}</span>
+                      </div>
+                      {msg.text}
+                    </div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+              {!archived && (
+                <div className="px-6 py-4 flex-shrink-0" style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+                  <button onClick={onShowMessage} className="w-full py-3 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)', boxShadow: '0 4px 15px rgba(99,102,241,0.25)' }}>
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M16.6915026,12.4744748 L3.50612381,13.2599618 C3.19218622,13.2599618 3.03521743,13.4170592 3.03521743,13.5741566 L1.15159189,20.0151496 C0.8376543,20.8006365 0.99,21.89 1.77946707,22.52 C2.41,22.99 3.50612381,23.1 4.13399899,22.8429026 L21.714504,14.0454487 C22.6563168,13.5741566 23.1272231,12.6315722 22.9702544,11.6889879 L4.13399899,1.16412393 C3.34915502,0.9 2.40734225,0.9 1.77946707,1.4 C0.994623095,2.0636533 0.837654326,3.0068859 1.15159189,3.89237481 L3.03521743,10.3333679 C3.03521743,10.4904652 3.19218622,10.6475626 3.50612381,10.6475626 L16.6915026,11.4330494 C16.6915026,11.4330494 17.1624089,11.4330494 17.1624089,12.0967027 C17.1624089,12.760356 16.6915026,12.4744748 16.6915026,12.4744748 Z" /></svg>
+                    Compose Message
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'details' && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              <div className="grid grid-cols-2 gap-4">
+                <InfoCard label="Email" value={client.email} />
+                <InfoCard label="Phone" value={client.phone} />
+                <InfoCard label="Budget" value={`$${client.budget?.toLocaleString()}/mo`} />
+                <InfoCard label="Last Contact" value={timeAgo(client.lastContact)} />
+              </div>
+              {/* Status Workflow */}
+              {!archived && (
+                <div className="p-4 rounded-xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                  <div className="text-xs font-semibold mb-3" style={{ color: '#94a3b8' }}>Status Workflow</div>
+                  <div className="flex gap-2">
+                    {statusFlow.map(s => (
+                      <button key={s} onClick={() => onUpdateStatus(client.id, s)} className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all capitalize"
+                        style={{ background: client.status === s ? statusColors[s].bg : 'rgba(148,163,184,0.06)', color: client.status === s ? statusColors[s].text : '#475569', border: client.status === s ? `1px solid ${statusColors[s].text}33` : '1px solid transparent' }}>
+                        {statusColors[s].label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Tags */}
+              <div className="p-4 rounded-xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                <div className="text-xs font-semibold mb-3" style={{ color: '#94a3b8' }}>Tags</div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {client.tags.map(tag => (
+                    <span key={tag} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium" style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.2)' }}>
+                      {tag}
+                      <button onClick={() => onRemoveTag(client.id, tag)} style={{ color: '#6366f1' }}>x</button>
+                    </span>
+                  ))}
+                  {client.tags.length === 0 && <span className="text-xs" style={{ color: '#475569' }}>No tags yet</span>}
+                </div>
+                <div className="flex gap-2">
+                  <input type="text" placeholder="Add tag..." value={newTag} onChange={e => setNewTag(e.target.value)} className="input-field text-xs flex-1"
+                    onKeyPress={e => { if (e.key === 'Enter' && newTag.trim()) { onAddTag(client.id, newTag.trim()); setNewTag(''); } }} />
+                  <button onClick={() => { if (newTag.trim()) { onAddTag(client.id, newTag.trim()); setNewTag(''); } }}
+                    className="px-4 py-2 rounded-lg text-xs font-medium" style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' }}>Add</button>
+                </div>
+              </div>
+              {/* Platforms */}
+              <div className="p-4 rounded-xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                <div className="text-xs font-semibold mb-3" style={{ color: '#94a3b8' }}>Connected Platforms</div>
+                <div className="flex gap-3">
+                  {client.platforms.map(p => (
+                    <div key={p} className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: 'rgba(148,163,184,0.06)' }}>
+                      <span className="w-5 h-5">{PlatformIcons[p]}</span>
+                      <span className="text-xs capitalize" style={{ color: '#94a3b8' }}>{p}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'notes' && (
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+              {client.notes?.length === 0 && <div className="text-sm text-center py-8" style={{ color: '#475569' }}>No notes yet. Add your first note below.</div>}
+              {client.notes?.map(note => (
+                <div key={note.id} className="p-4 rounded-xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                  <p className="text-sm" style={{ color: '#e2e8f0' }}>{note.text}</p>
+                  <div className="text-xs mt-2" style={{ color: '#475569' }}>{timeAgo(note.timestamp)}</div>
+                </div>
+              ))}
+              {!archived && (
+                <div className="flex gap-2 pt-2">
+                  <textarea placeholder="Write a note..." value={clientNoteText} onChange={e => setClientNoteText(e.target.value)} rows="3" className="input-field flex-1" />
+                  <button onClick={onAddNote} className="self-end px-5 py-2.5 rounded-xl text-sm font-medium text-white"
+                    style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>Add</button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function InfoCard({ label, value }) {
+      return (
+        <div className="p-3 rounded-xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="text-xs font-semibold mb-1" style={{ color: '#64748b' }}>{label}</div>
+          <div className="text-sm font-medium text-white">{value}</div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       ANALYTICS (Original detailed design)
+    ═══════════════════════════════════════════════ */
+    function AnalyticsPanel({ messages, clients, stats }) {
+      const platformVolumes = [
+        { n: 'Email', v: 234, c: '#EA4335' },
+        { n: 'Slack', v: 156, c: '#E01E5A' },
+        { n: 'Instagram', v: 128, c: '#E4405F' },
+        { n: 'Messenger', v: 95, c: '#0084FF' },
+        { n: 'LinkedIn', v: 67, c: '#0A66C2' },
+        { n: 'iMessage', v: 52, c: '#34C759' },
+        { n: 'Zoom', v: 38, c: '#2D8CFF' },
+      ];
+      const maxVol = Math.max(...platformVolumes.map(p => p.v));
+
+      const responseTimeData = [
+        { d: 'Mon', t: 3.2 }, { d: 'Tue', t: 4.1 }, { d: 'Wed', t: 2.8 },
+        { d: 'Thu', t: 5.5 }, { d: 'Fri', t: 4.8 }, { d: 'Sat', t: 8.2 }, { d: 'Sun', t: 12.1 },
+      ];
+      const maxTime = Math.max(...responseTimeData.map(d => d.t));
+
+      const readReceipts = { read: 67, delivered: 22, sent: 11 };
+
+      return (
+        <div className="flex-1 overflow-y-auto p-8" style={{ background: '#0f172a' }}>
+          <h2 className="text-2xl font-bold text-white mb-8">Analytics Dashboard</h2>
+
+          {/* Stat Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[
+              { icon: '📨', label: 'Total Messages', value: messages.length + 762, sub: '+12% this week' },
+              { icon: '⚡', label: 'Avg Response', value: '4.2 min', sub: 'Down from 6.8 min' },
+              { icon: '🔥', label: 'Busiest Hour', value: '10:00 AM', sub: 'Tuesday peak' },
+              { icon: '📱', label: 'Top Platform', value: 'Email', sub: `${stats.totalClients} active clients` },
+            ].map((card, i) => (
+              <div key={i} className="p-5 rounded-2xl" style={{ background: 'linear-gradient(135deg, #1e293b, #111827)', border: '1px solid rgba(148,163,184,0.08)' }}>
+                <div className="text-2xl mb-2">{card.icon}</div>
+                <div className="text-xs font-semibold mb-1" style={{ color: '#64748b' }}>{card.label}</div>
+                <div className="text-xl font-bold text-white">{card.value}</div>
+                <div className="text-xs mt-1" style={{ color: '#22c55e' }}>{card.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Volume by Platform */}
+            <div className="p-6 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="text-sm font-bold text-white mb-5">Volume by Platform</h3>
+              <div className="space-y-3">
+                {platformVolumes.map(p => (
+                  <div key={p.n} className="flex items-center gap-3">
+                    <span className="text-xs w-20 text-right font-medium" style={{ color: '#94a3b8' }}>{p.n}</span>
+                    <div className="flex-1 h-7 rounded-lg overflow-hidden" style={{ background: 'rgba(148,163,184,0.06)' }}>
+                      <div className="h-full rounded-lg flex items-center justify-end pr-2 transition-all duration-500" style={{ width: `${(p.v / maxVol) * 100}%`, background: `linear-gradient(90deg, ${p.c}88, ${p.c})` }}>
+                        <span className="text-xs font-bold text-white">{p.v}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Response Time */}
+            <div className="p-6 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="text-sm font-bold text-white mb-5">Response Time (minutes)</h3>
+              <div className="flex items-end gap-3 h-44">
+                {responseTimeData.map(d => (
+                  <div key={d.d} className="flex-1 flex flex-col items-center gap-2">
+                    <span className="text-xs font-bold" style={{ color: '#a5b4fc' }}>{d.t}</span>
+                    <div className="w-full rounded-t-lg transition-all duration-500" style={{
+                      height: `${(d.t / maxTime) * 100}%`,
+                      background: `linear-gradient(180deg, #6366f1, #4f46e5)`,
+                      minHeight: 8,
+                    }} />
+                    <span className="text-xs" style={{ color: '#64748b' }}>{d.d}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Read Receipts */}
+            <div className="p-6 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="text-sm font-bold text-white mb-5">Read Receipts</h3>
+              <div className="flex rounded-xl overflow-hidden h-10 mb-4">
+                <div style={{ width: `${readReceipts.read}%`, background: '#22c55e' }} className="flex items-center justify-center text-xs font-bold text-white">{readReceipts.read}%</div>
+                <div style={{ width: `${readReceipts.delivered}%`, background: '#6366f1' }} className="flex items-center justify-center text-xs font-bold text-white">{readReceipts.delivered}%</div>
+                <div style={{ width: `${readReceipts.sent}%`, background: '#475569' }} className="flex items-center justify-center text-xs font-bold text-white">{readReceipts.sent}%</div>
+              </div>
+              <div className="flex gap-6">
+                {[{ label: 'Read', color: '#22c55e', val: readReceipts.read }, { label: 'Delivered', color: '#6366f1', val: readReceipts.delivered }, { label: 'Sent', color: '#475569', val: readReceipts.sent }].map(r => (
+                  <div key={r.label} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-sm" style={{ background: r.color }} />
+                    <span className="text-xs" style={{ color: '#94a3b8' }}>{r.label} ({r.val}%)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Client Status Distribution */}
+            <div className="p-6 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="text-sm font-bold text-white mb-5">Client Pipeline</h3>
+              <div className="space-y-4">
+                {[
+                  { label: 'Leads', count: stats.lead, color: '#fbbf24' },
+                  { label: 'Active', count: stats.active, color: '#22c55e' },
+                  { label: 'Waiting', count: stats.waiting, color: '#f97316' },
+                  { label: 'Completed', count: stats.completed, color: '#818cf8' },
+                ].map(s => (
+                  <div key={s.label}>
+                    <div className="flex justify-between mb-1.5">
+                      <span className="text-xs font-medium" style={{ color: '#94a3b8' }}>{s.label}</span>
+                      <span className="text-sm font-bold text-white">{s.count}</span>
+                    </div>
+                    <div className="h-2.5 rounded-full overflow-hidden" style={{ background: 'rgba(148,163,184,0.06)' }}>
+                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${stats.totalClients ? (s.count / stats.totalClients) * 100 : 0}%`, background: s.color }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 pt-4 flex justify-between" style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+                <span className="text-xs" style={{ color: '#64748b' }}>Total Monthly Budget</span>
+                <span className="text-sm font-bold" style={{ color: '#22c55e' }}>${stats.totalBudget?.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       TEMPLATES
+    ═══════════════════════════════════════════════ */
+    function TemplatesPanel({ templates, onAdd, onEdit, onDelete }) {
+      return (
+        <div className="flex-1 overflow-y-auto p-8" style={{ background: '#0f172a' }}>
+          <div className="flex items-center justify-between mb-8">
+            <h2 className="text-2xl font-bold text-white">Message Templates</h2>
+            <button onClick={onAdd} className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center gap-2"
+              style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+              New Template
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {templates.map(t => (
+              <div key={t.id} onClick={() => onEdit(t)} className="p-5 rounded-2xl cursor-pointer transition-all duration-200 hover:scale-[1.01]"
+                style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="font-semibold text-white">{t.title}</h3>
+                  <button onClick={(e) => { e.stopPropagation(); onDelete(t.id); }} className="p-1 rounded" style={{ color: '#ef4444' }}>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  </button>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-md" style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8' }}>{t.category}</span>
+                <p className="text-sm mt-3" style={{ color: '#94a3b8', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{t.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       SETTINGS
+    ═══════════════════════════════════════════════ */
+    function SettingsPanel({ dnd, setDnd, onExportJSON, onExportCSV, onImport, user, onSignOut, useSupabase }) {
+      const connectedPlatforms = [
+        { key: 'email', name: 'Gmail', available: true },
+        { key: 'slack', name: 'Slack', available: true },
+        { key: 'instagram', name: 'Instagram', available: true },
+        { key: 'messenger', name: 'Messenger', available: true },
+        { key: 'linkedin', name: 'LinkedIn', available: true },
+        { key: 'imessage', name: 'iMessage', available: false },
+        { key: 'zoom', name: 'Zoom', available: true },
+      ];
+
+      return (
+        <div className="flex-1 overflow-y-auto p-8" style={{ background: '#0f172a' }}>
+          <h2 className="text-2xl font-bold text-white mb-8">Settings</h2>
+          <div className="max-w-lg space-y-6">
+
+            {/* Account */}
+            {useSupabase && user && (
+              <div className="p-5 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+                <h3 className="font-semibold text-white mb-3">Account</h3>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm text-white">{user.email}</div>
+                    <div className="text-xs mt-0.5" style={{ color: '#64748b' }}>Synced to Supabase</div>
+                  </div>
+                  <button onClick={onSignOut} className="px-4 py-2 rounded-lg text-xs font-medium" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Sign Out</button>
+                </div>
+              </div>
+            )}
+
+            {/* Connected Accounts */}
+            <div className="p-5 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="font-semibold text-white mb-1">Connected Accounts</h3>
+              <p className="text-xs mb-4" style={{ color: '#64748b' }}>Link your platforms to sync messages automatically</p>
+              <div className="space-y-3">
+                {connectedPlatforms.map(p => (
+                  <div key={p.key} className="flex items-center justify-between py-2 px-3 rounded-lg" style={{ background: 'rgba(148,163,184,0.04)' }}>
+                    <div className="flex items-center gap-3">
+                      <span className="w-5 h-5">{PlatformIcons[p.key]}</span>
+                      <span className="text-sm font-medium text-white">{p.name}</span>
+                    </div>
+                    {p.available ? (
+                      <button className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' }}>Connect</button>
+                    ) : (
+                      <span className="text-xs" style={{ color: '#475569' }}>macOS only</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 p-3 rounded-lg text-xs" style={{ background: 'rgba(99,102,241,0.08)', color: '#818cf8' }}>
+                Platform integrations require API setup. See SETUP.md for step-by-step instructions.
+              </div>
+            </div>
+
+            {/* DND */}
+            <div className="p-5 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-white">Do Not Disturb</h3>
+                  <p className="text-xs mt-1" style={{ color: '#64748b' }}>Silence all notifications</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" checked={dnd} onChange={e => setDnd(e.target.checked)} className="sr-only" />
+                  <div className="w-11 h-6 rounded-full transition-colors" style={{ background: dnd ? '#6366f1' : '#334155' }}>
+                    <div className="w-5 h-5 rounded-full bg-white transition-transform mt-0.5" style={{ transform: dnd ? 'translateX(22px)' : 'translateX(2px)' }} />
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Export */}
+            <div className="p-5 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="font-semibold text-white mb-4">Data Export</h3>
+              <div className="space-y-3">
+                <button onClick={onExportJSON} className="w-full py-3 rounded-xl text-sm font-medium text-white flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  Export as JSON
+                </button>
+                <button onClick={onExportCSV} className="w-full py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2"
+                  style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px solid rgba(148,163,184,0.1)' }}>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                  Export as CSV
+                </button>
+              </div>
+            </div>
+
+            {/* Import */}
+            <div className="p-5 rounded-2xl" style={{ background: '#111827', border: '1px solid rgba(148,163,184,0.08)' }}>
+              <h3 className="font-semibold text-white mb-4">Data Import</h3>
+              <label className="w-full py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 cursor-pointer"
+                style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8', border: '1px dashed rgba(148,163,184,0.2)' }}>
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" /></svg>
+                Import JSON Backup
+                <input type="file" accept=".json" onChange={onImport} className="hidden" />
+              </label>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ═══════════════════════════════════════════════
+       MODALS
+    ═══════════════════════════════════════════════ */
+    function AddClientModal({ onClose, onAdd }) {
+      const [f, setF] = useState({ name: '', businessType: '', email: '', phone: '', budget: 0, platforms: [], status: 'lead' });
+      const toggle = (p) => setF(prev => ({ ...prev, platforms: prev.platforms.includes(p) ? prev.platforms.filter(x => x !== p) : [...prev.platforms, p] }));
+
+      return (
+        <div className="modal-backdrop animate-fadeIn" onClick={onClose}>
+          <div className="modal-panel animate-slideUp" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-white mb-5">Add New Client</h2>
+            <div className="space-y-4">
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Name *</label><input type="text" placeholder="Client name" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} className="input-field" /></div>
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Business Type</label><input type="text" placeholder="e.g. Fitness Studio" value={f.businessType} onChange={e => setF({ ...f, businessType: e.target.value })} className="input-field" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Email</label><input type="email" placeholder="email@example.com" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} className="input-field" /></div>
+                <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Phone</label><input type="tel" placeholder="(555) 000-0000" value={f.phone} onChange={e => setF({ ...f, phone: e.target.value })} className="input-field" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Monthly Budget</label><input type="number" placeholder="5000" value={f.budget} onChange={e => setF({ ...f, budget: parseInt(e.target.value) || 0 })} className="input-field" /></div>
+                <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Status</label><select value={f.status} onChange={e => setF({ ...f, status: e.target.value })}><option value="lead">Lead</option><option value="active">Active</option><option value="waiting">Waiting</option><option value="completed">Completed</option></select></div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{ color: '#64748b' }}>Platforms</label>
+                <div className="flex flex-wrap gap-2">
+                  {Object.keys(PlatformIcons).map(p => (
+                    <button key={p} onClick={() => toggle(p)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all capitalize"
+                      style={{ background: f.platforms.includes(p) ? 'rgba(99,102,241,0.2)' : 'rgba(148,163,184,0.06)', color: f.platforms.includes(p) ? '#a5b4fc' : '#64748b', border: f.platforms.includes(p) ? '1px solid rgba(99,102,241,0.3)' : '1px solid transparent' }}>
+                      <span className="w-4 h-4">{PlatformIcons[p]}</span>{p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8' }}>Cancel</button>
+                <button onClick={() => { if (f.name) onAdd(f); }} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>Add Client</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function NewMessageModal({ onClose, onSend, platforms, templates }) {
+      const [text, setText] = useState('');
+      const [platform, setPlatform] = useState(platforms[0] || 'email');
+
+      return (
+        <div className="modal-backdrop animate-fadeIn" onClick={onClose}>
+          <div className="modal-panel animate-slideUp" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-white mb-5">New Message</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{ color: '#64748b' }}>Platform</label>
+                <div className="flex gap-2 flex-wrap">
+                  {platforms.map(p => (
+                    <button key={p} onClick={() => setPlatform(p)} className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium capitalize transition-all"
+                      style={{ background: platform === p ? 'rgba(99,102,241,0.2)' : 'rgba(148,163,184,0.06)', color: platform === p ? '#a5b4fc' : '#64748b', border: platform === p ? '1px solid rgba(99,102,241,0.3)' : '1px solid transparent' }}>
+                      <span className="w-4 h-4">{PlatformIcons[p]}</span>{p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{ color: '#64748b' }}>Quick Template</label>
+                <select onChange={e => { const t = templates.find(tmpl => tmpl.id === e.target.value); if (t) setText(t.text); }}>
+                  <option value="">Select a template...</option>
+                  {templates.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{ color: '#64748b' }}>Message</label>
+                <textarea placeholder="Type your message..." value={text} onChange={e => setText(e.target.value)} rows="5" className="input-field w-full" />
+              </div>
+              <div className="flex gap-3 pt-4">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8' }}>Cancel</button>
+                <button onClick={() => { if (text.trim()) onSend(text, platform); }} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2"
+                  style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M16.6915026,12.4744748 L3.50612381,13.2599618 C3.19218622,13.2599618 3.03521743,13.4170592 3.03521743,13.5741566 L1.15159189,20.0151496 C0.8376543,20.8006365 0.99,21.89 1.77946707,22.52 C2.41,22.99 3.50612381,23.1 4.13399899,22.8429026 L21.714504,14.0454487 C22.6563168,13.5741566 23.1272231,12.6315722 22.9702544,11.6889879 L4.13399899,1.16412393 C3.34915502,0.9 2.40734225,0.9 1.77946707,1.4 C0.994623095,2.0636533 0.837654326,3.0068859 1.15159189,3.89237481 L3.03521743,10.3333679 C3.03521743,10.4904652 3.19218622,10.6475626 3.50612381,10.6475626 L16.6915026,11.4330494 C16.6915026,11.4330494 17.1624089,11.4330494 17.1624089,12.0967027 C17.1624089,12.760356 16.6915026,12.4744748 16.6915026,12.4744748 Z" /></svg>
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TemplateModal({ onClose, onSave, initialData }) {
+      const [f, setF] = useState(initialData || { title: '', category: '', text: '' });
+      return (
+        <div className="modal-backdrop animate-fadeIn" onClick={onClose}>
+          <div className="modal-panel animate-slideUp" onClick={e => e.stopPropagation()}>
+            <h2 className="text-xl font-bold text-white mb-5">{initialData ? 'Edit Template' : 'New Template'}</h2>
+            <div className="space-y-4">
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Title</label><input type="text" placeholder="Template name" value={f.title} onChange={e => setF({ ...f, title: e.target.value })} className="input-field" /></div>
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Category</label><select value={f.category} onChange={e => setF({ ...f, category: e.target.value })}><option value="">Select...</option><option value="Greeting">Greeting</option><option value="Status Update">Status Update</option><option value="Follow-up">Follow-up</option><option value="Pricing">Pricing</option></select></div>
+              <div><label className="text-xs font-semibold block mb-1.5" style={{ color: '#64748b' }}>Message</label><textarea placeholder="Template message..." value={f.text} onChange={e => setF({ ...f, text: e.target.value })} rows="5" className="input-field w-full" /></div>
+              <div className="flex gap-3 pt-4">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8' }}>Cancel</button>
+                <button onClick={() => { if (f.title && f.text) onSave(f); }} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{ background: 'linear-gradient(135deg, #4f46e5, #6366f1)' }}>Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DeleteConfirmModal({ clientName, onConfirm, onCancel }) {
+      return (
+        <div className="modal-backdrop animate-fadeIn" onClick={onCancel}>
+          <div className="modal-panel animate-slideUp" onClick={e => e.stopPropagation()}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(239,68,68,0.15)' }}>
+              <svg className="w-6 h-6" style={{ color: '#ef4444' }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            </div>
+            <h2 className="text-lg font-bold text-white text-center mb-2">Delete {clientName}?</h2>
+            <p className="text-sm text-center mb-6" style={{ color: '#64748b' }}>All messages and data will be removed. You can undo this action briefly after.</p>
+            <div className="flex gap-3">
+              <button onClick={onCancel} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: 'rgba(148,163,184,0.08)', color: '#94a3b8' }}>Cancel</button>
+              <button onClick={onConfirm} className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white" style={{ background: '#ef4444' }}>Delete</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<UnifiedInbox />, document.getElementById('root'));
+  </script>
+</body>
+</html>
